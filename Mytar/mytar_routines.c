@@ -1,6 +1,3 @@
-// Practica 1. Pablo Lozano, Gonzalo Contreras y Pablo Pezo
-
-
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,23 +14,18 @@ extern char *use;
  *
  * Returns the number of bytes actually copied or -1 if an error occured.
  */
-int
-copynFile(FILE * origin, FILE * destination, int nBytes)
+//Copia nBytes de origin a destination
+int copynFile(FILE * origin, FILE * destination, int nBytes)
 {
-	// Complete the function
-	int i = 0;
-
-	int c = getc(origin);
-
-	while (i < nBytes && c != EOF)
-	{
-		putc(c, destination);
-		c = getc(origin);
-
-		i++;
-	}
-
-	return i;
+	char* c = (char*) malloc(sizeof(char) * nBytes);	//crea y reserva el espacio en el array c que se empleara para copiar nBytes desde origin
+	
+	int num = fread(c, sizeof(char), nBytes, origin);	//lee de origin nBytes elementos de tamano sizeof(char) y los copia en c. num es el numero de bytes leidos
+	
+	fwrite(c, sizeof(char), num, destination);	//escribe num elementos de tamano sizeof(char) desde c a destination
+	
+	free(c);
+	
+	return num;	//devolvemos el numero de bytes copiados
 }
 
 /** Loads a string from a file.
@@ -47,23 +39,23 @@ copynFile(FILE * origin, FILE * destination, int nBytes)
  * 
  * Returns: !=NULL if success, NULL if error
  */
+//Lee un string del fichero file
 char* loadstr(FILE * file)
 {
-	int i = 0;
-	int c = getc(file);
+	int count = 0;	//contador para indicar el tamano que ocupa el string
 
-	while (c != '\0' && c != EOF)
+	while(getc(file) != '\0')	//calcula el tamano del string leyendo caracter a caracter y aumentando el contador
 	{
-		i++;
-		c = getc(file);
+		count++;
 	}
 
-	char* nombre = (char *) malloc(i);
+	fseek(file, -(count + 1), SEEK_CUR);	//una vez se conoce el tamano, situa el puntero al inicio del string
 
-	fseek(file, -i, SEEK_CUR);
-	fread(nombre, 1, i, file);
+	char* c = (char*) malloc(count * sizeof(char));	//crea y reserva espacio al array c para poder copiar el string
 
-	return nombre;
+	fread(c, sizeof(char), count + 1, file);	//lee el string y lo guarda en el array c
+
+	return c;	//devuelve el string
 }
 
 /** Read tarball header and store it in memory.
@@ -75,19 +67,20 @@ char* loadstr(FILE * file)
  * On success it returns the starting memory address of an array that stores 
  * the (name,size) pairs read from the tar file. Upon failure, the function returns NULL.
  */
-stHeaderEntry* readHeader(FILE *tarFile, int *nFiles)
+//Lee el encabezado del fichero tarFile
+stHeaderEntry* readHeader(FILE * tarFile, int *nFiles)
 {
-	fread(nFiles, sizeof (int), 1, tarFile);
+	fread(nFiles, sizeof(int), 1, tarFile);	//lee el numero de ficheros que encontraremos en el mtar y lo guarda en nFiles (como es por referencia, la actualiza)
 
-	stHeaderEntry* cabecera = (stHeaderEntry*) malloc((*nFiles) * (sizeof (stHeaderEntry)));
+	stHeaderEntry* cabecera = (stHeaderEntry*) malloc((*nFiles) * sizeof(stHeaderEntry));	//crea la cabecera de tipo stHeaderEntry y reserva una entrada para cada fichero
 
 	for(int i = 0; i < *nFiles; i++)
 	{
-		cabecera[i].name = loadstr(tarFile);
-		fread(&cabecera[i].size, sizeof(cabecera[i].size), 1, tarFile);
+		cabecera[i].name = loadstr(tarFile);	//lee directamente del fichero mtar y guarda la info como nombre
+		fread(&(cabecera[i].size), sizeof(int), 1, tarFile);	//lo mismo para leer el tamano
 	}
 
-	return cabecera;
+	return cabecera;	//devuelve la cabecera, que incluira los nombres y tamanos de todos los ficheros
 }
 
 /** Creates a tarball archive 
@@ -111,55 +104,52 @@ stHeaderEntry* readHeader(FILE *tarFile, int *nFiles)
  * pairs occupy strlen(name)+1 bytes.
  *
  */
+//Crea el fichero tar juntando varios ficheros dados en fileNames[]
 int createTar(int nFiles, char *fileNames[], char tarName[])
 {
-	FILE *in, *tar;	
-	unsigned int tamcabecera = sizeof(int);
+	FILE * f = fopen(tarName, "w");	//abre el mtar para escribir la info
 
-	stHeaderEntry *cabecera = malloc(sizeof (stHeaderEntry) * nFiles);
-
-	tar = fopen(tarName, "wx");
-
+	int tamCabecera = sizeof(int);	//crea el tamano de la cabecera -> numero de ficheros, nombre y tamano de todos los ficheros
 	for(int i = 0; i < nFiles; i++)
 	{
-		int namesize = strlen(fileNames[i]) + 1;
-
-		cabecera[i].name = (char *) malloc(namesize);
-		strcpy(cabecera[i].name, fileNames[i]);
-
-		tamcabecera += namesize + sizeof(cabecera->size);
+		tamCabecera += strlen(fileNames[i]) + 1 + sizeof(int);
 	}
 
-	fseek(tar, tamcabecera, SEEK_SET);
+	fseek(f, tamCabecera, SEEK_SET);	//avanza el puntero para copiar primero la info de los ficheros
 
+	int* fileSizes = (int*) malloc(nFiles * sizeof(int));	//crea y reserva espacio para el numero que indica el tamano de cada fichero
+	
 	for(int i = 0; i < nFiles; i++)
 	{
-		in = fopen(fileNames[i], "r");
-
-		cabecera[i].size = copynFile(in, tar, INT_MAX);
-		fclose(in);
-	}
-
-	fseek(tar, 0, SEEK_SET);
-
-	fwrite(&nFiles, sizeof(int), 1, tar);
-
-	for(int i = 0; i < nFiles; i++)
-	{
-		fwrite(cabecera[i].name, 1, strlen(cabecera[i].name) + 1, tar);
+		FILE * p = fopen(fileNames[i], "r");
 		
-		fwrite(&cabecera[i].size, sizeof (cabecera[i].size), 1, tar);
-	}
+		int tamCopiado = copynFile(p, f, 200);	//copia la info del fichero p al mtar de 200 en 200 bytes y guarda el tamano copiado real
 
-	fprintf(stdout, "Archivo creado con exito\n");
+		fileSizes[i] = 0;
 
-	for (int i = 0; i < nFiles; i++)
-	{
-		free(cabecera[i].name);
+		while(tamCopiado != 0)	//sigue copiando y actualizando el tamano copiado del fichero en el array fileSizes
+		{
+			fileSizes[i] += tamCopiado;
+			tamCopiado = copynFile(p, f, 200);
+		}
+
+		fclose(p);
 	}
 	
-	free(cabecera);
-	fclose(tar);
+	fseek(f, 0, SEEK_SET);	//coloca el puntero al inicio para escribir la info en el encabezado del mtar
+
+	fwrite(&nFiles, sizeof(int), 1, f);	//indica el numero de ficheros al inicio del encabezado
+
+	for(int i = 0; i < nFiles; i++)	//escribe el nombre y tamano para cada fichero
+	{
+		fwrite(fileNames[i], sizeof(char), strlen(fileNames[i]) + 1, f);
+		fwrite(&fileSizes[i], sizeof(int), 1, f);
+	}
+
+	fclose(f);
+	free(fileSizes);
+
+	printf("Fichero .mtar creado\n");
 
 	return EXIT_SUCCESS;
 }
@@ -178,29 +168,23 @@ int createTar(int nFiles, char *fileNames[], char tarName[])
  * stored in the data section of the tarball.
  *
  */
+//Extrae todos los ficheros que forman el fichero tar
 int extractTar(char tarName[])
 {
-	FILE *out, *tar;
-	int num;
-	
-	tar = fopen(tarName, "r");
-	stHeaderEntry *cabecera = readHeader(tar, &num);
+	FILE * f = fopen(tarName, "r");	//abre el fichero mtar para leer la info
 
-	for(int i = 0; i < num; i++)
+	int nFiles;
+	stHeaderEntry* cabecera = readHeader(f, &nFiles);	//lee la cabecera y el numero de ficheros que componen el mtar
+
+	for(int i = 0; i < nFiles; i++)	//abre el fichero con el nombre que le corresponde y copia tantos bytes como ocupa
 	{
-		out = fopen(cabecera[i].name, "w");
-		copynFile(tar, out, cabecera[i].size);
-
-		fclose(out);
+		FILE * p = fopen(cabecera[i].name, "w");
+		copynFile(f, p, cabecera[i].size);
+		fclose(p);
 	}
+	fclose(f);
 
-	for(int i = 0; i < num; i++)
-	{
-		free(cabecera[i].name);
-	}
-	
-	free(cabecera);
-	fclose(tar);
+	printf("Fichero .mtar extraído\n");
 
 	return EXIT_SUCCESS;
 }
